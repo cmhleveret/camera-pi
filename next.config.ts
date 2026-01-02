@@ -1,7 +1,11 @@
-import type { NextConfig } from "next";
+import type { NextConfig } from 'next'
 
 const nextConfig: NextConfig = {
-  /* config options here */
-};
+  serverExternalPackages: ["i2c-bus", "pca9685"],
+  allowedDevOrigins: [
+    "192.168.1.30",
+    "raspberrypi.local",
+  ],
+}
 
-export default nextConfig;
+export default nextConfig
