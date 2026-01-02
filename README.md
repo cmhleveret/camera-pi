@@ -443,3 +443,4 @@ journalctl -u pi-cam -f
 - Keep grounds common (Pi ↔ PCA9685 ↔ servo PSU).
 - If camera works with `rpicam-hello` but not in browser, check `http://<pi-ip>:8080/stream.mjpg` directly.
 - If servos work in production but dev is flaky, prefer `npm run build && npm run start` on the Pi.
+# camera-pi
