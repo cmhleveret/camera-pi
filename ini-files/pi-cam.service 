@@ -1,0 +1,15 @@
+[Unit]
+Description=Pi Camera MJPEG Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi
+ExecStart=/usr/bin/python3 /home/pi/mjpeg_server.py
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

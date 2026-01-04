@@ -7,7 +7,6 @@ A working setup for:
 - **CSI Pi Camera** streamed as MJPEG on `:8080/stream.mjpg`
 - **PCA9685 over I2C** to control **3 servos**
 - **systemd** services so both servers start **on boot**
-- Optional: set a friendly hostname (e.g. `camerapi`) so you can browse to `http://camerapi.local:3000`
 
 ---
 
@@ -57,47 +56,6 @@ Typically:
 - **GND** → brown/black
 - **V+** → red
 - **Signal (PWM)** → yellow/orange/white
-
----
-
-## 0.1) Optional: set a friendly hostname (camerapi)
-
-This lets you reach the Pi on the LAN using:
-
-- `http://camerapi.local:3000` (Next.js UI)
-- `http://camerapi.local:8080/stream.mjpg` (camera stream)
-
-### Set hostname
-```bash
-sudo hostnamectl set-hostname camerapi
-```
-
-### Update /etc/hosts (recommended)
-```bash
-sudo nano /etc/hosts
-```
-
-Change:
-```txt
-127.0.1.1    raspberrypi
-```
-
-To:
-```txt
-127.0.1.1    camerapi
-```
-
-Reboot:
-```bash
-sudo reboot
-```
-
-> If `.local` doesn’t resolve on your network, install mDNS:
-```bash
-sudo apt update
-sudo apt install -y avahi-daemon
-sudo systemctl enable --now avahi-daemon
-```
 
 ---
 
@@ -173,6 +131,7 @@ export function getPca9685(): Promise<any> {
   if (!driverPromise) {
     driverPromise = new Promise((resolve, reject) => {
       try {
+        // Resolve native addons from the *project* node_modules
         const requireFromCwd = createRequire(process.cwd() + "/")
         const i2c = requireFromCwd("i2c-bus")
         const { Pca9685Driver } = requireFromCwd("pca9685")
@@ -185,7 +144,8 @@ export function getPca9685(): Promise<any> {
       } catch (err: any) {
         reject(
           new Error(
-            `I2C/PCA9685 init failed. Check I2C is enabled + wiring + permissions.\n${err?.message ?? err}`
+            `I2C/PCA9685 init failed. Check I2C is enabled + wiring + permissions.
+${err?.message ?? err}`
           )
         )
       }
@@ -225,6 +185,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Invalid payload" }, { status: 400 })
     }
 
+    // Lazy load to avoid build-time issues on non-Pi hardware
     const { setServoAngle } = await import("@/lib/servo/pca9685")
     await setServoAngle(body.channel, body.angle)
 
@@ -240,18 +201,27 @@ export async function POST(req: Request) {
 
 ---
 
-## 4) Next.js config (native addon friendly)
+## 4) Next.js config (native addon friendly + LAN dev)
 
 Create `next.config.js` (CommonJS):
 
 ```js
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // Keep native modules out of bundling
   serverExternalPackages: ["i2c-bus", "pca9685"],
+
+  // Optional: allow LAN access to dev assets (Next dev only)
+  // allowedDevOrigins: [
+  //   "http://192.168.1.30:3000",
+  //   "http://raspberrypi.local:3000",
+  // ],
 }
 
 module.exports = nextConfig
 ```
+
+> For a “real” Pi host, prefer production mode (`npm run build && npm run start`) and you don’t need `allowedDevOrigins`.
 
 ---
 
@@ -263,6 +233,7 @@ This uses **Picamera2** + Flask and exposes a browser-friendly MJPEG stream.
 ```bash
 sudo apt update
 sudo apt install -y python3-flask python3-picamera2
+# Recommended (often required for fast JPEG handling)
 sudo apt install -y python3-simplejpeg || true
 ```
 
@@ -330,10 +301,16 @@ From another device on the LAN:
 
 ## 6) GUI (camera stream + servos)
 
-Point the browser `<img>` at the MJPEG endpoint:
+Your `<img src="...">` should point to the new endpoint:
 
 ```ts
 setStreamUrl(`http://${window.location.hostname}:8080/stream.mjpg`)
+```
+
+Example `CameraView`:
+
+```tsx
+<img src={streamUrl} className="h-full w-full object-cover" alt="Camera stream" />
 ```
 
 ---
@@ -345,6 +322,10 @@ setStreamUrl(`http://${window.location.hostname}:8080/stream.mjpg`)
 npm run dev -- -H 0.0.0.0 -p 3000
 ```
 
+LAN:
+- `http://<pi-ip>:3000`
+- often also works: `http://raspberrypi.local:3000`
+
 ### Production (recommended on Pi)
 ```bash
 npm run build
@@ -353,32 +334,16 @@ npm run start
 
 ---
 
-## 8) Auto-start on boot with systemd (INI files)
+## 8) Run both on boot with systemd
 
-### 8.1 Build Next.js for production
-```bash
-cd ~/camera-pi
-npm ci
-npm run build
-```
-
-Ensure `package.json` includes:
-```json
-{
-  "scripts": {
-    "start": "next start -H 0.0.0.0 -p 3000"
-  }
-}
-```
-
-### 8.2 Create the Next.js service (pi-web.service)
+### 8.1 Next.js systemd service
 
 Create:
 ```bash
 sudo nano /etc/systemd/system/pi-web.service
 ```
 
-Paste:
+Paste (update `WorkingDirectory` if needed):
 ```ini
 [Unit]
 Description=Pi Next.js App
@@ -407,7 +372,7 @@ sudo systemctl start pi-web
 journalctl -u pi-web -f
 ```
 
-### 8.3 Create the camera service (pi-cam.service)
+### 8.2 Camera MJPEG server systemd service
 
 Create:
 ```bash
@@ -449,7 +414,7 @@ journalctl -u pi-cam -f
 sudo reboot
 ```
 
-Verify:
+Then:
 ```bash
 sudo systemctl status pi-web pi-cam
 ```
@@ -477,4 +442,5 @@ journalctl -u pi-cam -f
 - Servos draw a lot of current — external **5V** for **V+** is recommended.
 - Keep grounds common (Pi ↔ PCA9685 ↔ servo PSU).
 - If camera works with `rpicam-hello` but not in browser, check `http://<pi-ip>:8080/stream.mjpg` directly.
-- If dev is flaky, prefer `npm run build && npm run start` on the Pi.
+- If servos work in production but dev is flaky, prefer `npm run build && npm run start` on the Pi.
+# camera-pi
