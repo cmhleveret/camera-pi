@@ -5,8 +5,11 @@ import { ErrorDisplay } from "@/components/pi/error-display"
 import { CameraView } from "@/components/pi/camera-view"
 import { ServoControls } from "@/components/pi/servo-controls"
 import { Joystick } from "@/components/pi/joystick"
+import { Button } from "@/components/ui/button"
 
 const SEND_INTERVAL_MS = 50
+const DEFAULT_STREAM_PORT = 8080
+const DEFAULT_FACE_PORT = 8081
 
 async function setServo(channel: number, angle: number) {
   const res = await fetch("/api/servo", {
@@ -21,16 +24,23 @@ export default function Home() {
   const [angles, setAngles] = React.useState<Record<number, number>>({ 0: 90, 1: 90, 2: 90 })
   const [busy, setBusy] = React.useState(false)
   const [err, setErr] = React.useState<string | null>(null)
-  const [streamUrl, setStreamUrl] = React.useState<string>("")
+  const [host, setHost] = React.useState("")
+  const [viewMode, setViewMode] = React.useState<"manual" | "face">("manual")
   // Coalesce rapid updates per channel so the network doesn't build a backlog.
   const pendingRef = React.useRef<Map<number, number>>(new Map())
   const inFlightRef = React.useRef<Set<number>>(new Set())
   const timerRef = React.useRef<Map<number, number>>(new Map())
 
   React.useEffect(() => {
-    const port = Number(process.env.NEXT_PUBLIC_FACETRACK_PORT ?? "8080")
-    setStreamUrl(`http://${window.location.hostname}:${port}/stream.mjpg`)
+    setHost(window.location.hostname)
   }, [])
+
+  const streamUrl = React.useMemo(() => {
+    if (!host) return ""
+    const facePort = Number(process.env.NEXT_PUBLIC_FACETRACK_PORT ?? DEFAULT_FACE_PORT)
+    const port = viewMode === "face" ? facePort : DEFAULT_STREAM_PORT
+    return `http://${host}:${port}/stream.mjpg`
+  }, [host, viewMode])
 
   React.useEffect(() => {
     return () => {
@@ -107,7 +117,20 @@ export default function Home() {
 
         {/* Error Display */}
 
-        {/* Camera View */}
+      {/* Camera View */}
+        <div className="flex items-center justify-between rounded-xl bg-card px-4 py-3">
+          <div className="text-sm font-medium">
+            {viewMode === "face" ? "Face Detect" : "Manual"} View
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setViewMode((m) => (m === "face" ? "manual" : "face"))}
+          >
+            Switch to {viewMode === "face" ? "Manual" : "Face Detect"}
+          </Button>
+        </div>
+
         <CameraView streamUrl={streamUrl} />
 
         {/* Joystick Control */}
