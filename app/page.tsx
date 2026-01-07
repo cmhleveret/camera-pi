@@ -28,7 +28,8 @@ export default function Home() {
   const timerRef = React.useRef<Map<number, number>>(new Map())
 
   React.useEffect(() => {
-    setStreamUrl(`http://${window.location.hostname}:8080/stream.mjpg`)
+    const port = Number(process.env.NEXT_PUBLIC_FACETRACK_PORT ?? "8080")
+    setStreamUrl(`http://${window.location.hostname}:${port}/stream.mjpg`)
   }, [])
 
   React.useEffect(() => {
