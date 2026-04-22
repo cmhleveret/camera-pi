@@ -8,7 +8,7 @@ Type=simple
 User=pi
 WorkingDirectory=/home/pi/camera-pi
 EnvironmentFile=/home/pi/camera-pi/.env.local
-ExecStart=/home/pi/camera-pi/scripts/.venv/bin/python3 /home/pi/camera-pi/scripts/face_track.py
+ExecStart=/home/pi/camera-pi/scripts/.venv39/bin/python3 /home/pi/camera-pi/scripts/face_track.py
 Restart=always
 RestartSec=3
 

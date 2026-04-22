@@ -53,45 +53,27 @@ log = logging.getLogger("face_track")
 app = Flask(__name__)
 
 # ---------------------------------------------------------------------------
-# Coral TPU detection (using ai-edge-litert)
+# Coral TPU detection (using pycoral + tflite-runtime)
 # ---------------------------------------------------------------------------
 
 def load_interpreter():
-    from ai_edge_litert.interpreter import Interpreter, load_delegate
+    from pycoral.utils.edgetpu import make_interpreter, list_edge_tpus
+
+    tpus = list_edge_tpus()
+    if not tpus:
+        raise RuntimeError(
+            "No Google Coral Edge TPU detected. Check USB connection and libedgetpu installation."
+        )
+    log.info("Found %d Edge TPU(s): %s", len(tpus), tpus)
 
     if not os.path.exists(MODEL_PATH):
         raise RuntimeError(
             f"Model not found at {MODEL_PATH}. Run scripts/models/download_model.sh first."
         )
 
-    # Try to load with Edge TPU delegate
-    edgetpu_lib = None
-    for lib_path in (
-        "libedgetpu.so.1",
-        "/usr/lib/aarch64-linux-gnu/libedgetpu.so.1",
-        "/usr/lib/arm-linux-gnueabihf/libedgetpu.so.1",
-    ):
-        try:
-            interpreter = Interpreter(
-                model_path=MODEL_PATH,
-                experimental_delegates=[
-                    load_delegate(lib_path)
-                ],
-            )
-            edgetpu_lib = lib_path
-            break
-        except (ValueError, OSError):
-            continue
-
-    if edgetpu_lib is None:
-        raise RuntimeError(
-            "Could not load Edge TPU delegate. Check that libedgetpu is installed "
-            "and Coral USB is connected.\n"
-            "Install: sudo apt install -y libedgetpu1-std"
-        )
-
+    interpreter = make_interpreter(MODEL_PATH)
     interpreter.allocate_tensors()
-    log.info("Loaded model with Edge TPU delegate (%s): %s", edgetpu_lib, MODEL_PATH)
+    log.info("Loaded model: %s", MODEL_PATH)
     return interpreter
 
 
@@ -110,45 +92,29 @@ Detection = Tuple[int, int, int, int, float]  # x, y, w, h, score
 
 
 def detect_persons(interpreter, frame: np.ndarray) -> List[Detection]:
+    from pycoral.adapters import common, detect
+
     h, w = frame.shape[:2]
-
-    # Get model input shape
-    input_details = interpreter.get_input_details()
-    input_shape = input_details[0]["shape"]  # e.g. [1, 300, 300, 3]
-    input_h, input_w = input_shape[1], input_shape[2]
-
-    # Prepare input
-    resized = cv2.resize(frame, (input_w, input_h))
+    input_size = common.input_size(interpreter)
+    resized = cv2.resize(frame, input_size)
     rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
-    input_data = np.expand_dims(rgb, axis=0).astype(np.uint8)
-
-    interpreter.set_tensor(input_details[0]["index"], input_data)
+    common.set_input(interpreter, rgb)
     interpreter.invoke()
 
-    # Parse SSD MobileNet v2 outputs:
-    # 0: bounding boxes [1, N, 4] (ymin, xmin, ymax, xmax) normalized 0-1
-    # 1: class IDs [1, N]
-    # 2: scores [1, N]
-    # 3: count [1]
-    output_details = interpreter.get_output_details()
-    boxes = interpreter.get_tensor(output_details[0]["index"])[0]    # [N, 4]
-    classes = interpreter.get_tensor(output_details[1]["index"])[0]  # [N]
-    scores = interpreter.get_tensor(output_details[2]["index"])[0]   # [N]
-    count = int(interpreter.get_tensor(output_details[3]["index"])[0])
+    objs = detect.get_objects(interpreter, score_threshold=MIN_SCORE)
+    scale_x = w / input_size[0]
+    scale_y = h / input_size[1]
 
     results = []
-    for i in range(count):
-        if scores[i] < MIN_SCORE:
+    for obj in objs:
+        if obj.id != PERSON_CLASS_ID:
             continue
-        if int(classes[i]) != PERSON_CLASS_ID:
-            continue
-
-        ymin, xmin, ymax, xmax = boxes[i]
-        x = int(xmin * w)
-        y = int(ymin * h)
-        bw = int((xmax - xmin) * w)
-        bh = int((ymax - ymin) * h)
-        results.append((x, y, bw, bh, float(scores[i])))
+        bbox = obj.bbox
+        x = int(bbox.xmin * scale_x)
+        y = int(bbox.ymin * scale_y)
+        bw = int((bbox.xmax - bbox.xmin) * scale_x)
+        bh = int((bbox.ymax - bbox.ymin) * scale_y)
+        results.append((x, y, bw, bh, obj.score))
 
     return results
 
