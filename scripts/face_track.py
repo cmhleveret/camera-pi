@@ -13,6 +13,7 @@ PORT = int(os.environ.get("FACETRACK_PORT", "8081"))
 
 DETECT_EVERY_N = int(os.environ.get("FACETRACK_DETECT_EVERY_N", "3"))
 MIN_SIZE = int(os.environ.get("FACETRACK_MIN_SIZE", "40"))
+CASCADE_PATH = os.environ.get("FACETRACK_CASCADE_PATH", "")
 
 app = Flask(__name__)
 
@@ -34,9 +35,29 @@ def detect_faces(gray, cascade) -> Tuple[Tuple[int, int, int, int], ...]:
 
 
 def generate_frames() -> Generator[bytes, None, None]:
-    cascade = cv2.CascadeClassifier(
-        os.path.join(cv2.data.haarcascades, "haarcascade_frontalface_default.xml")
-    )
+    cascade_path = CASCADE_PATH
+    if not cascade_path:
+        if hasattr(cv2, "data") and hasattr(cv2.data, "haarcascades"):
+            cascade_path = os.path.join(
+                cv2.data.haarcascades, "haarcascade_frontalface_default.xml"
+            )
+        else:
+            candidates = (
+                "/usr/share/opencv/haarcascades/haarcascade_frontalface_default.xml",
+                "/usr/share/opencv4/haarcascades/haarcascade_frontalface_default.xml",
+                "/usr/local/share/opencv4/haarcascades/haarcascade_frontalface_default.xml",
+            )
+            for path in candidates:
+                if os.path.exists(path):
+                    cascade_path = path
+                    break
+    if not cascade_path or not os.path.exists(cascade_path):
+        raise RuntimeError(
+            "Could not find Haar cascade. Set FACETRACK_CASCADE_PATH to the "
+            "haarcascade_frontalface_default.xml path."
+        )
+
+    cascade = cv2.CascadeClassifier(cascade_path)
     cap = open_capture(STREAM_URL)
     last_faces: Tuple[Tuple[int, int, int, int], ...] = tuple()
     frame_idx = 0
