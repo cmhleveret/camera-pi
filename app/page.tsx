@@ -10,6 +10,9 @@ import { Button } from "@/components/ui/button"
 const SEND_INTERVAL_MS = 50
 const DEFAULT_STREAM_PORT = 8080
 const DEFAULT_FACE_PORT = 8081
+const LOAD_ANGLE = Number(process.env.NEXT_PUBLIC_LOAD_ANGLE ?? 0)
+const SHOOT_ANGLE = Number(process.env.NEXT_PUBLIC_SHOOT_ANGLE ?? 180)
+const SHOOT_CHANNEL = 2
 
 async function setServo(channel: number, angle: number) {
   const res = await fetch("/api/servo", {
@@ -23,6 +26,7 @@ async function setServo(channel: number, angle: number) {
 export default function Home() {
   const [angles, setAngles] = React.useState<Record<number, number>>({ 0: 90, 1: 90, 2: 90 })
   const [busy, setBusy] = React.useState(false)
+  const [actionBusy, setActionBusy] = React.useState<"load" | "shoot" | null>(null)
   const [err, setErr] = React.useState<string | null>(null)
   const [host, setHost] = React.useState("")
   const [viewMode, setViewMode] = React.useState<"manual" | "face">("manual")
@@ -102,6 +106,33 @@ export default function Home() {
     scheduleSend(channel)
   }
 
+  async function handleLoad() {
+    try {
+      setErr(null)
+      setActionBusy("load")
+      await setServo(SHOOT_CHANNEL, LOAD_ANGLE)
+      setAngles((a) => ({ ...a, [SHOOT_CHANNEL]: LOAD_ANGLE }))
+    } catch (e: any) {
+      setErr(e?.message ?? "Load failed")
+    } finally {
+      setActionBusy(null)
+    }
+  }
+
+  async function handleShoot() {
+    try {
+      setErr(null)
+      setActionBusy("shoot")
+      await setServo(SHOOT_CHANNEL, SHOOT_ANGLE)
+      setAngles((a) => ({ ...a, [SHOOT_CHANNEL]: SHOOT_ANGLE }))
+      await fetch("/api/sound", { method: "POST" })
+    } catch (e: any) {
+      setErr(e?.message ?? "Shoot failed")
+    } finally {
+      setActionBusy(null)
+    }
+  }
+
   return (
     <main className="min-h-screen bg-background p-1 sm:p-2 lg:p-4">
       <div className="mx-auto max-w-4xl space-y-1">
@@ -132,6 +163,27 @@ export default function Home() {
         </div>
 
         <CameraView streamUrl={streamUrl} />
+
+        {/* Load / Shoot Controls */}
+        <div className="flex gap-3 rounded-xl bg-card px-4 py-3">
+          <Button
+            className="flex-1"
+            variant="outline"
+            size="lg"
+            disabled={actionBusy !== null}
+            onClick={handleLoad}
+          >
+            {actionBusy === "load" ? "Loading..." : "Load"}
+          </Button>
+          <Button
+            className="flex-1 bg-red-600 text-white hover:bg-red-700"
+            size="lg"
+            disabled={actionBusy !== null}
+            onClick={handleShoot}
+          >
+            {actionBusy === "shoot" ? "Firing..." : "Shoot"}
+          </Button>
+        </div>
 
         {/* Joystick Control */}
         <Joystick
