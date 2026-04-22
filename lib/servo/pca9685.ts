@@ -21,8 +21,8 @@ function clamp(n: number, a: number, b: number) {
 }
 
 const EASE_STEP_MS = 20
-const EASE_MIN_DURATION_MS = 80
-const EASE_MAX_DURATION_MS = 400
+const EASE_MIN_DURATION_MS = 40
+const EASE_MAX_DURATION_MS = 200
 
 const lastAngle = new Map<number, number>()
 const targetAngle = new Map<number, number>()
@@ -94,7 +94,7 @@ export async function setServoAngle(channel: number, angle: number) {
       }
 
       const delta = target - current
-      const duration = clamp(Math.abs(delta) * 8, EASE_MIN_DURATION_MS, EASE_MAX_DURATION_MS)
+      const duration = clamp(Math.abs(delta) * 4, EASE_MIN_DURATION_MS, EASE_MAX_DURATION_MS)
       const steps = Math.max(1, Math.round(duration / EASE_STEP_MS))
 
       for (let i = 1; i <= steps; i += 1) {

@@ -150,15 +150,23 @@ class TrackingController:
             return
         self.last_send_time = now
 
+        # Send both servo commands in parallel threads (non-blocking)
         for ch, angle in ((TRACK_PAN_CH, self.pan), (TRACK_TILT_CH, self.tilt)):
-            try:
-                self._session.post(
-                    TRACK_SERVO_API,
-                    json={"channel": ch, "angle": round(angle, 1)},
-                    timeout=0.5,
-                )
-            except Exception:
-                pass  # fire-and-forget; servo API may be briefly unavailable
+            threading.Thread(
+                target=self._post_servo,
+                args=(ch, round(angle, 1)),
+                daemon=True,
+            ).start()
+
+    def _post_servo(self, ch: int, angle: float):
+        try:
+            self._session.post(
+                TRACK_SERVO_API,
+                json={"channel": ch, "angle": angle},
+                timeout=0.3,
+            )
+        except Exception:
+            pass
 
 # ---------------------------------------------------------------------------
 # Frame producer (background thread)
