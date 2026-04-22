@@ -57,8 +57,7 @@ app = Flask(__name__)
 # ---------------------------------------------------------------------------
 
 def load_interpreter():
-    from ai_edge_litert.interpreter import Interpreter
-    from ai_edge_litert.experimental import load_delegate
+    from ai_edge_litert.interpreter import Interpreter, load_delegate
 
     if not os.path.exists(MODEL_PATH):
         raise RuntimeError(
