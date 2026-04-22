@@ -477,9 +477,11 @@ journalctl -u pi-cam -f
 
 Optional: adds real-time person detection + automatic servo tracking using the Coral Edge TPU.
 
+> **Important:** Google's `pycoral` and `tflite-runtime` require Python ≤ 3.9. Raspberry Pi OS Trixie ships Python 3.13, so we use **pyenv** to install Python 3.9 alongside it.
+
 ### 11.1 Install libedgetpu
 
-Google's apt repo has key issues on newer Pi OS (Trixie). Use `[trusted=yes]` to bypass:
+Google's apt repo has key issues on Trixie. Use `[trusted=yes]` to bypass:
 
 ```bash
 echo "deb [trusted=yes] https://packages.cloud.google.com/apt coral-edgetpu-stable main" | sudo tee /etc/apt/sources.list.d/coral-edgetpu.list
@@ -487,31 +489,51 @@ sudo apt update
 sudo apt install -y libedgetpu1-std
 ```
 
-### 11.2 Create a Python virtual environment
-
-Python 3.13 on Trixie requires a venv for pip installs:
+Plug the Coral USB Accelerator into a **USB 3.0 (blue) port**. Verify:
 
 ```bash
-sudo apt install -y python3-full python3-venv
-python3 -m venv ~/camera-pi/scripts/.venv --system-site-packages
-source ~/camera-pi/scripts/.venv/bin/activate
+lsusb
+# Should show "Global Unichip Corp." (before firmware load) or "Google Inc."
 ```
 
-### 11.3 Install Python dependencies
-
-`pycoral` and `tflite-runtime` don't support Python 3.13 — use `ai-edge-litert` instead:
+### 11.2 Install Python 3.9 via pyenv
 
 ```bash
-pip install ai-edge-litert flask opencv-python-headless requests
+# Install build dependencies
+sudo apt install -y build-essential libffi-dev libssl-dev zlib1g-dev \
+  libbz2-dev libreadline-dev libsqlite3-dev
+
+# Install pyenv
+curl https://pyenv.run | bash
+
+# Add to your shell (paste these 3 lines)
+export PYENV_ROOT="$HOME/.pyenv"
+export PATH="$PYENV_ROOT/bin:$PATH"
+eval "$(pyenv init - bash)"
+
+# Build Python 3.9 (~15-20 min on a Pi)
+pyenv install 3.9.21
 ```
 
-Or install from the requirements file:
+> Add the 3 export/eval lines to `~/.bashrc` so pyenv is available on future logins.
+
+### 11.3 Create a Python 3.9 virtual environment
 
 ```bash
-pip install -r ~/camera-pi/scripts/requirements-face-track.txt
+~/.pyenv/versions/3.9.21/bin/python3.9 -m venv ~/camera-pi/scripts/.venv39 --clear
+source ~/camera-pi/scripts/.venv39/bin/activate
 ```
 
-### 11.4 Download the Edge TPU model
+### 11.4 Install Python dependencies
+
+```bash
+pip install --extra-index-url https://google-coral.github.io/py-repo/ pycoral~=2.0 tflite-runtime
+pip install flask opencv-python-headless requests "numpy<2"
+```
+
+> `numpy<2` is required — pycoral is incompatible with NumPy 2.x.
+
+### 11.5 Download the Edge TPU model
 
 ```bash
 cd ~/camera-pi/scripts/models
@@ -520,18 +542,24 @@ bash download_model.sh
 
 This downloads `ssd_mobilenet_v2_coco_quant_postprocess_edgetpu.tflite` and `coco_labels.txt`.
 
-### 11.5 Test the tracker
+### 11.6 Test the tracker
 
 Make sure the camera server (port 8080) and Next.js (port 3000) are running first, then:
 
 ```bash
-source ~/camera-pi/scripts/.venv/bin/activate
+source ~/camera-pi/scripts/.venv39/bin/activate
 python3 ~/camera-pi/scripts/face_track.py
+```
+
+You should see:
+```
+Found 1 Edge TPU(s): [{'type': 'usb', 'path': '...'}]
+Loaded model: .../ssd_mobilenet_v2_coco_quant_postprocess_edgetpu.tflite
 ```
 
 View the annotated stream at `http://<pi-ip>:8081/stream.mjpg`. The UI's "Face Detect" toggle also switches to this stream.
 
-### 11.6 Run as a systemd service
+### 11.7 Run as a systemd service
 
 ```bash
 sudo cp ~/camera-pi/ini-files/pi-face.service /etc/systemd/system/
@@ -541,7 +569,7 @@ sudo systemctl start pi-face
 journalctl -u pi-face -f
 ```
 
-### 11.7 Tracking configuration
+### 11.8 Tracking configuration
 
 Add these to `.env.local` to tune tracking behaviour:
 

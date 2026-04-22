@@ -96,32 +96,6 @@ def load_labels() -> dict:
 Detection = Tuple[int, int, int, int, float]  # x, y, w, h, score
 
 
-def detect_persons(interpreter, frame: np.ndarray) -> List[Detection]:
-    from pycoral.adapters import common, detect
-
-    h, w = frame.shape[:2]
-    input_size = common.input_size(interpreter)
-    resized = cv2.resize(frame, input_size)
-    rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
-    common.set_input(interpreter, rgb)
-    interpreter.invoke()
-
-    objs = detect.get_objects(interpreter, score_threshold=MIN_SCORE)
-    scale_x = w / input_size[0]
-    scale_y = h / input_size[1]
-
-    results = []
-    for obj in objs:
-        if obj.id != PERSON_CLASS_ID:
-            continue
-        bbox = obj.bbox
-        x = int(bbox.xmin * scale_x)
-        y = int(bbox.ymin * scale_y)
-        bw = int((bbox.xmax - bbox.xmin) * scale_x)
-        bh = int((bbox.ymax - bbox.ymin) * scale_y)
-        results.append((x, y, bw, bh, obj.score))
-
-    return results
 
 # ---------------------------------------------------------------------------
 # Tracking controller
@@ -212,21 +186,38 @@ frame_buffer = FrameBuffer()
 
 
 def open_capture(url: str) -> cv2.VideoCapture:
-    cap = cv2.VideoCapture(url)
+    cap = cv2.VideoCapture(url, cv2.CAP_FFMPEG)
     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
     return cap
 
 
+# Cache pycoral imports at module level after first call
+_pycoral_common = None
+_pycoral_detect = None
+_input_size = None
+
+
 def detection_loop():
+    global _pycoral_common, _pycoral_detect, _input_size
+
     log.info("Initializing Coral Edge TPU...")
     interpreter = load_interpreter()
     labels = load_labels()
     tracker = TrackingController() if TRACK_ENABLED else None
 
+    # Cache pycoral imports and input size (avoid per-frame overhead)
+    from pycoral.adapters import common, detect
+    _pycoral_common = common
+    _pycoral_detect = detect
+    _input_size = common.input_size(interpreter)
+
     log.info("Connecting to camera stream: %s", STREAM_URL)
     cap = open_capture(STREAM_URL)
     frame_idx = 0
     last_detections: List[Detection] = []
+
+    # Pre-compute JPEG encode params
+    encode_params = [int(cv2.IMWRITE_JPEG_QUALITY), 70]
 
     while True:
         ok, frame = cap.read()
@@ -242,22 +233,22 @@ def detection_loop():
         # Run detection every N frames
         if frame_idx % DETECT_EVERY_N == 0:
             try:
-                last_detections = detect_persons(interpreter, frame)
+                last_detections = _detect_fast(interpreter, frame)
             except Exception as e:
                 log.error("Detection error: %s", e)
                 last_detections = []
 
-        # Update tracking
-        if tracker and frame_idx % DETECT_EVERY_N == 0:
-            h, w = frame.shape[:2]
-            tracker.update(last_detections, w, h)
+            # Update tracking on detection frames only
+            if tracker:
+                h, w = frame.shape[:2]
+                tracker.update(last_detections, w, h)
 
         # Draw bounding boxes
         primary = max(last_detections, key=lambda d: d[2] * d[3]) if last_detections else None
         for det in last_detections:
             x, y, w, h, score = det
             is_primary = det is primary
-            color = (220, 200, 32) if is_primary else (32, 220, 90)  # cyan for tracked, green for others
+            color = (220, 200, 32) if is_primary else (32, 220, 90)
             cv2.rectangle(frame, (x, y), (x + w, y + h), color, 2)
             label = f"person {score:.0%}"
             cv2.putText(frame, label, (x, y - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
@@ -268,9 +259,35 @@ def detection_loop():
             cv2.putText(frame, info, (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
 
         # Encode and push to buffer
-        ok, buf = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
+        ok, buf = cv2.imencode(".jpg", frame, encode_params)
         if ok:
             frame_buffer.put(buf.tobytes())
+
+
+def _detect_fast(interpreter, frame: np.ndarray) -> List[Detection]:
+    """Optimized detection using cached imports and pre-computed input size."""
+    h, w = frame.shape[:2]
+    resized = cv2.resize(frame, _input_size, interpolation=cv2.INTER_NEAREST)
+    rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
+    _pycoral_common.set_input(interpreter, rgb)
+    interpreter.invoke()
+
+    objs = _pycoral_detect.get_objects(interpreter, score_threshold=MIN_SCORE)
+    scale_x = w / _input_size[0]
+    scale_y = h / _input_size[1]
+
+    results = []
+    for obj in objs:
+        if obj.id != PERSON_CLASS_ID:
+            continue
+        bbox = obj.bbox
+        x = int(bbox.xmin * scale_x)
+        y = int(bbox.ymin * scale_y)
+        bw = int((bbox.xmax - bbox.xmin) * scale_x)
+        bh = int((bbox.ymax - bbox.ymin) * scale_y)
+        results.append((x, y, bw, bh, obj.score))
+
+    return results
 
 
 # ---------------------------------------------------------------------------
