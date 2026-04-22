@@ -2,11 +2,13 @@ import os
 import time
 import threading
 import logging
+import json
+import urllib.request
+from queue import Queue, Empty
 from typing import List, Tuple, Optional
 
 import cv2
 import numpy as np
-import requests
 from flask import Flask, Response
 
 # ---------------------------------------------------------------------------
@@ -101,13 +103,49 @@ Detection = Tuple[int, int, int, int, float]  # x, y, w, h, score
 # Tracking controller
 # ---------------------------------------------------------------------------
 
+class ServoSender:
+    """Background thread that sends servo commands via HTTP.
+    Only keeps the latest command per channel — stale commands are dropped."""
+
+    def __init__(self):
+        self._latest = {}  # channel -> angle (always overwritten)
+        self._lock = threading.Lock()
+        self._event = threading.Event()
+        t = threading.Thread(target=self._run, daemon=True)
+        t.start()
+
+    def send(self, channel: int, angle: float):
+        with self._lock:
+            self._latest[channel] = round(angle, 1)
+        self._event.set()
+
+    def _run(self):
+        while True:
+            self._event.wait(timeout=1.0)
+            self._event.clear()
+            with self._lock:
+                commands = dict(self._latest)
+            for ch, angle in commands.items():
+                try:
+                    data = json.dumps({"channel": ch, "angle": angle}).encode()
+                    req = urllib.request.Request(
+                        TRACK_SERVO_API,
+                        data=data,
+                        headers={"Content-Type": "application/json"},
+                        method="POST",
+                    )
+                    urllib.request.urlopen(req, timeout=0.3)
+                except Exception:
+                    pass
+
+
 class TrackingController:
     def __init__(self):
         self.pan = TRACK_HOME_PAN
         self.tilt = TRACK_HOME_TILT
         self.last_detection_time = time.monotonic()
         self.last_send_time = 0.0
-        self._session = requests.Session()
+        self._sender = ServoSender()
 
     def update(self, detections: List[Detection], frame_w: int, frame_h: int):
         now = time.monotonic()
@@ -138,35 +176,15 @@ class TrackingController:
         else:
             elapsed = now - self.last_detection_time
             if TRACK_RETURN_HOME and elapsed > TRACK_LOST_TIMEOUT:
-                # Gradually return to home
                 self.pan += (TRACK_HOME_PAN - self.pan) * 0.05
                 self.tilt += (TRACK_HOME_TILT - self.tilt) * 0.05
 
-        self._send_servos()
-
-    def _send_servos(self):
+        # Non-blocking: just updates the latest target, sender thread picks it up
         now = time.monotonic()
-        if now - self.last_send_time < 0.05:  # rate limit 20Hz
-            return
-        self.last_send_time = now
-
-        # Send both servo commands in parallel threads (non-blocking)
-        for ch, angle in ((TRACK_PAN_CH, self.pan), (TRACK_TILT_CH, self.tilt)):
-            threading.Thread(
-                target=self._post_servo,
-                args=(ch, round(angle, 1)),
-                daemon=True,
-            ).start()
-
-    def _post_servo(self, ch: int, angle: float):
-        try:
-            self._session.post(
-                TRACK_SERVO_API,
-                json={"channel": ch, "angle": angle},
-                timeout=0.3,
-            )
-        except Exception:
-            pass
+        if now - self.last_send_time >= 0.04:  # 25Hz
+            self.last_send_time = now
+            self._sender.send(TRACK_PAN_CH, self.pan)
+            self._sender.send(TRACK_TILT_CH, self.tilt)
 
 # ---------------------------------------------------------------------------
 # Frame producer (background thread)

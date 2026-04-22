@@ -94,6 +94,16 @@ export async function setServoAngle(channel: number, angle: number) {
       }
 
       const delta = target - current
+
+      // Small moves (< 5°): set immediately, no easing (fast tracking response)
+      if (Math.abs(delta) < 5) {
+        pwm.setPulseLength(channel, angleToPulseUs(target))
+        lastAngle.set(channel, target)
+        if (targetAngle.get(channel) === target) break
+        continue
+      }
+
+      // Larger moves: ease for smooth manual control
       const duration = clamp(Math.abs(delta) * 4, EASE_MIN_DURATION_MS, EASE_MAX_DURATION_MS)
       const steps = Math.max(1, Math.round(duration / EASE_STEP_MS))
 
