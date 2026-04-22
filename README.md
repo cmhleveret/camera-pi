@@ -473,6 +473,104 @@ journalctl -u pi-cam -f
 
 ---
 
+## 11) Google Coral USB Accelerator — Person Tracking
+
+Optional: adds real-time person detection + automatic servo tracking using the Coral Edge TPU.
+
+### 11.1 Install libedgetpu
+
+Google's apt repo has key issues on newer Pi OS (Trixie). Use `[trusted=yes]` to bypass:
+
+```bash
+echo "deb [trusted=yes] https://packages.cloud.google.com/apt coral-edgetpu-stable main" | sudo tee /etc/apt/sources.list.d/coral-edgetpu.list
+sudo apt update
+sudo apt install -y libedgetpu1-std
+```
+
+### 11.2 Create a Python virtual environment
+
+Python 3.13 on Trixie requires a venv for pip installs:
+
+```bash
+sudo apt install -y python3-full python3-venv
+python3 -m venv ~/camera-pi/scripts/.venv --system-site-packages
+source ~/camera-pi/scripts/.venv/bin/activate
+```
+
+### 11.3 Install Python dependencies
+
+`pycoral` and `tflite-runtime` don't support Python 3.13 — use `ai-edge-litert` instead:
+
+```bash
+pip install ai-edge-litert flask opencv-python-headless requests
+```
+
+Or install from the requirements file:
+
+```bash
+pip install -r ~/camera-pi/scripts/requirements-face-track.txt
+```
+
+### 11.4 Download the Edge TPU model
+
+```bash
+cd ~/camera-pi/scripts/models
+bash download_model.sh
+```
+
+This downloads `ssd_mobilenet_v2_coco_quant_postprocess_edgetpu.tflite` and `coco_labels.txt`.
+
+### 11.5 Test the tracker
+
+Make sure the camera server (port 8080) and Next.js (port 3000) are running first, then:
+
+```bash
+source ~/camera-pi/scripts/.venv/bin/activate
+python3 ~/camera-pi/scripts/face_track.py
+```
+
+View the annotated stream at `http://<pi-ip>:8081/stream.mjpg`. The UI's "Face Detect" toggle also switches to this stream.
+
+### 11.6 Run as a systemd service
+
+```bash
+sudo cp ~/camera-pi/ini-files/pi-face.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable pi-face
+sudo systemctl start pi-face
+journalctl -u pi-face -f
+```
+
+### 11.7 Tracking configuration
+
+Add these to `.env.local` to tune tracking behaviour:
+
+```bash
+# Servo channels
+TRACK_PAN_CHANNEL=0        # horizontal servo channel
+TRACK_TILT_CHANNEL=1       # vertical servo channel
+
+# Tracking tuning
+TRACK_SPEED_PAN=3.0        # degrees per unit error per frame
+TRACK_SPEED_TILT=2.0       # degrees per unit error per frame
+TRACK_DEADZONE=0.05        # ignore small errors (0-1 normalized)
+TRACK_INVERT_PAN=false     # flip pan direction if mounted backwards
+TRACK_INVERT_TILT=false    # flip tilt direction if mounted backwards
+
+# Lost detection behaviour
+TRACK_LOST_TIMEOUT=2.0     # seconds before returning home
+TRACK_HOME_PAN=90          # home pan angle
+TRACK_HOME_TILT=90         # home tilt angle
+TRACK_RETURN_HOME=true     # return to home on lost detection
+
+# Detection
+FACETRACK_MIN_SCORE=0.5    # confidence threshold (0-1)
+FACETRACK_DETECT_EVERY_N=1 # run detection every N frames (TPU is fast)
+TRACK_ENABLED=true         # set false for detection-only (no servo movement)
+```
+
+---
+
 ## Notes / gotchas
 - Servos draw a lot of current — external **5V** for **V+** is recommended.
 - Keep grounds common (Pi ↔ PCA9685 ↔ servo PSU).

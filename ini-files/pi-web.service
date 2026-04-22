@@ -6,9 +6,9 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=pi
-WorkingDirectory=/home/pi/control-pi
+WorkingDirectory=/home/pi/camera-pi
 Environment=NODE_ENV=production
-EnvironmentFile=/home/pi/control-pi/.env.local
+EnvironmentFile=/home/pi/camera-pi/.env.local
 ExecStart=/usr/bin/npm run start
 Restart=always
 RestartSec=3
