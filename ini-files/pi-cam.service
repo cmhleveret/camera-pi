@@ -6,8 +6,8 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=pi
-WorkingDirectory=/home/pi
-ExecStart=/usr/bin/python3 /home/pi/mjpeg_server.py
+WorkingDirectory=/home/pi/control-pi
+ExecStart=/usr/bin/python3 /home/pi/control-pi/mjpeg_server.py
 Restart=always
 RestartSec=2
 

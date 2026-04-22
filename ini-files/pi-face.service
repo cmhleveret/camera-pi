@@ -1,0 +1,16 @@
+[Unit]
+Description=Pi Person Tracker (Coral TPU)
+After=network-online.target pi-cam.service pi-web.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/control-pi
+EnvironmentFile=/home/pi/control-pi/.env.local
+ExecStart=/home/pi/control-pi/scripts/.venv/bin/python3 /home/pi/control-pi/scripts/face_track.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
