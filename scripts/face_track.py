@@ -193,10 +193,46 @@ class FrameBuffer:
 frame_buffer = FrameBuffer()
 
 
-def open_capture(url: str) -> cv2.VideoCapture:
-    cap = cv2.VideoCapture(url, cv2.CAP_FFMPEG)
-    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-    return cap
+# ---------------------------------------------------------------------------
+# Camera grab thread — always keeps only the LATEST frame
+# ---------------------------------------------------------------------------
+
+class CameraGrabber:
+    """Dedicated thread that continuously reads from the MJPEG stream,
+    discarding old frames so the detection loop always gets the newest one."""
+
+    def __init__(self, url: str):
+        self._url = url
+        self._frame: Optional[np.ndarray] = None
+        self._lock = threading.Lock()
+        self._running = True
+
+    def start(self):
+        t = threading.Thread(target=self._grab_loop, daemon=True)
+        t.start()
+
+    def _grab_loop(self):
+        cap = cv2.VideoCapture(self._url, cv2.CAP_FFMPEG)
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+
+        while self._running:
+            ok = cap.grab()  # grab without decoding — fast
+            if not ok:
+                cap.release()
+                time.sleep(0.3)
+                log.warning("Lost camera stream, reconnecting...")
+                cap = cv2.VideoCapture(self._url, cv2.CAP_FFMPEG)
+                cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                continue
+
+            ok, frame = cap.retrieve()  # decode the grabbed frame
+            if ok:
+                with self._lock:
+                    self._frame = frame
+
+    def get_frame(self) -> Optional[np.ndarray]:
+        with self._lock:
+            return self._frame
 
 
 # Cache pycoral imports at module level after first call
@@ -220,20 +256,23 @@ def detection_loop():
     _input_size = common.input_size(interpreter)
 
     log.info("Connecting to camera stream: %s", STREAM_URL)
-    cap = open_capture(STREAM_URL)
+    grabber = CameraGrabber(STREAM_URL)
+    grabber.start()
+
+    # Wait for first frame
+    while grabber.get_frame() is None:
+        time.sleep(0.1)
+    log.info("Camera stream connected")
+
     frame_idx = 0
     last_detections: List[Detection] = []
-
-    # Pre-compute JPEG encode params
     encode_params = [int(cv2.IMWRITE_JPEG_QUALITY), 70]
 
     while True:
-        ok, frame = cap.read()
-        if not ok:
-            cap.release()
-            time.sleep(0.5)
-            log.warning("Lost camera stream, reconnecting...")
-            cap = open_capture(STREAM_URL)
+        # Always get the LATEST frame — no buffering lag
+        frame = grabber.get_frame()
+        if frame is None:
+            time.sleep(0.01)
             continue
 
         frame_idx += 1
@@ -252,22 +291,21 @@ def detection_loop():
                 tracker.update(last_detections, w, h)
 
         # Draw bounding boxes
+        annotated = frame.copy()
         primary = max(last_detections, key=lambda d: d[2] * d[3]) if last_detections else None
         for det in last_detections:
             x, y, w, h, score = det
             is_primary = det is primary
             color = (220, 200, 32) if is_primary else (32, 220, 90)
-            cv2.rectangle(frame, (x, y), (x + w, y + h), color, 2)
+            cv2.rectangle(annotated, (x, y), (x + w, y + h), color, 2)
             label = f"person {score:.0%}"
-            cv2.putText(frame, label, (x, y - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
+            cv2.putText(annotated, label, (x, y - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
 
-        # Overlay tracking info
         if tracker:
             info = f"pan:{tracker.pan:.0f} tilt:{tracker.tilt:.0f} det:{len(last_detections)}"
-            cv2.putText(frame, info, (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+            cv2.putText(annotated, info, (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
 
-        # Encode and push to buffer
-        ok, buf = cv2.imencode(".jpg", frame, encode_params)
+        ok, buf = cv2.imencode(".jpg", annotated, encode_params)
         if ok:
             frame_buffer.put(buf.tobytes())
 
