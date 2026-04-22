@@ -14,11 +14,11 @@ const LOAD_ANGLE = Number(process.env.NEXT_PUBLIC_LOAD_ANGLE ?? 0)
 const SHOOT_ANGLE = Number(process.env.NEXT_PUBLIC_SHOOT_ANGLE ?? 180)
 const SHOOT_CHANNEL = 2
 
-async function setServo(channel: number, angle: number) {
+async function setServo(channel: number, angle: number, easing = true) {
   const res = await fetch("/api/servo", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ channel, angle }),
+    body: JSON.stringify({ channel, angle, easing }),
   })
   if (!res.ok) throw new Error(await res.text())
 }

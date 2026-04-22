@@ -3,7 +3,7 @@ import { NextResponse } from "next/server"
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
 
-type Body = { channel: number; angle: number }
+type Body = { channel: number; angle: number; easing?: boolean }
 
 export async function POST(req: Request) {
   try {
@@ -20,7 +20,7 @@ export async function POST(req: Request) {
 
     // Lazy load the servo module to avoid build-time errors on non-Pi hardware
     const { setServoAngle } = await import("@/lib/servo/pca9685")
-    await setServoAngle(body.channel, body.angle)
+    await setServoAngle(body.channel, body.angle, body.easing ?? false)
     return NextResponse.json({ ok: true })
   } catch (err: any) {
     return NextResponse.json(

@@ -72,10 +72,14 @@ export function getPca9685(): Promise<any> {
   return driverPromise
 }
 
-export async function setServoAngle(channel: number, angle: number) {
+const easingChannels = new Set<number>()
+
+export async function setServoAngle(channel: number, angle: number, easing = false) {
   const pwm = await getPca9685()
   const next = clamp(angle, 0, 180)
   targetAngle.set(channel, next)
+  if (easing) easingChannels.add(channel)
+  else easingChannels.delete(channel)
 
   if (runningChannels.has(channel)) return
   runningChannels.add(channel)
@@ -84,6 +88,7 @@ export async function setServoAngle(channel: number, angle: number) {
     while (true) {
       const target = targetAngle.get(channel)
       if (target === undefined) break
+      const useEasing = easingChannels.has(channel)
 
       const current = lastAngle.get(channel)
       if (current === undefined || Math.abs(target - current) < 0.5) {
@@ -95,15 +100,15 @@ export async function setServoAngle(channel: number, angle: number) {
 
       const delta = target - current
 
-      // Small moves (< 5°): set immediately, no easing (fast tracking response)
-      if (Math.abs(delta) < 5) {
+      // No easing: set immediately (tracking mode)
+      if (!useEasing) {
         pwm.setPulseLength(channel, angleToPulseUs(target))
         lastAngle.set(channel, target)
         if (targetAngle.get(channel) === target) break
         continue
       }
 
-      // Larger moves: ease for smooth manual control
+      // Easing: smooth manual control
       const duration = clamp(Math.abs(delta) * 4, EASE_MIN_DURATION_MS, EASE_MAX_DURATION_MS)
       const steps = Math.max(1, Math.round(duration / EASE_STEP_MS))
 
