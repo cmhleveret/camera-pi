@@ -81,10 +81,15 @@ def load_labels() -> dict:
     labels = {}
     if os.path.exists(LABELS_PATH):
         with open(LABELS_PATH, "r") as f:
-            for line in f:
+            for i, line in enumerate(f):
                 parts = line.strip().split(maxsplit=1)
                 if len(parts) == 2:
-                    labels[int(parts[0])] = parts[1]
+                    try:
+                        labels[int(parts[0])] = parts[1]
+                    except ValueError:
+                        labels[i] = line.strip()
+                elif len(parts) == 1 and parts[0]:
+                    labels[i] = parts[0]
     return labels
 
 
